@@ -51,10 +51,13 @@ var (
 )
 
 type csrf struct {
-	h    http.Handler
 	sc   *securecookie.SecureCookie
 	st   store
 	opts options
+}
+
+type CSRF struct {
+	*csrf
 }
 
 // options contains the optional settings for the CSRF middleware.
@@ -70,6 +73,53 @@ type options struct {
 	FieldName     string
 	ErrorHandler  http.Handler
 	CookieName    string
+}
+
+// NewCSRF returns a new CSRF implementing the Handler in
+func NewCSRF(authKey []byte, opts ...func(*csrf)) *CSRF {
+	cs := parseOptions(opts...)
+
+	// Set the defaults if no options have been specified
+	if cs.opts.ErrorHandler == nil {
+		cs.opts.ErrorHandler = http.HandlerFunc(unauthorizedHandler)
+	}
+
+	if cs.opts.MaxAge < 1 {
+		// Default of 12 hours
+		cs.opts.MaxAge = defaultAge
+	}
+
+	if cs.opts.FieldName == "" {
+		cs.opts.FieldName = fieldName
+	}
+
+	if cs.opts.CookieName == "" {
+		cs.opts.CookieName = cookieName
+	}
+
+	if cs.opts.RequestHeader == "" {
+		cs.opts.RequestHeader = headerName
+	}
+
+	// Create an authenticated securecookie instance.
+	if cs.sc == nil {
+		cs.sc = securecookie.New(authKey, nil)
+		// Set the MaxAge of the underlying securecookie.
+		cs.sc.MaxAge(cs.opts.MaxAge)
+	}
+
+	if cs.st == nil {
+		// Default to the cookieStore
+		cs.st = &cookieStore{
+			name:     cs.opts.CookieName,
+			maxAge:   cs.opts.MaxAge,
+			secure:   cs.opts.Secure,
+			httpOnly: cs.opts.HttpOnly,
+			sc:       cs.sc,
+		}
+	}
+
+	return &CSRF{cs}
 }
 
 // Protect is HTTP middleware that provides Cross-Site Request Forgery
@@ -119,54 +169,16 @@ type options struct {
 //
 func Protect(authKey []byte, opts ...func(*csrf)) func(http.Handler) http.Handler {
 	return func(h http.Handler) http.Handler {
-		cs := parseOptions(h, opts...)
-
-		// Set the defaults if no options have been specified
-		if cs.opts.ErrorHandler == nil {
-			cs.opts.ErrorHandler = http.HandlerFunc(unauthorizedHandler)
-		}
-
-		if cs.opts.MaxAge < 1 {
-			// Default of 12 hours
-			cs.opts.MaxAge = defaultAge
-		}
-
-		if cs.opts.FieldName == "" {
-			cs.opts.FieldName = fieldName
-		}
-
-		if cs.opts.CookieName == "" {
-			cs.opts.CookieName = cookieName
-		}
-
-		if cs.opts.RequestHeader == "" {
-			cs.opts.RequestHeader = headerName
-		}
-
-		// Create an authenticated securecookie instance.
-		if cs.sc == nil {
-			cs.sc = securecookie.New(authKey, nil)
-			// Set the MaxAge of the underlying securecookie.
-			cs.sc.MaxAge(cs.opts.MaxAge)
-		}
-
-		if cs.st == nil {
-			// Default to the cookieStore
-			cs.st = &cookieStore{
-				name:     cs.opts.CookieName,
-				maxAge:   cs.opts.MaxAge,
-				secure:   cs.opts.Secure,
-				httpOnly: cs.opts.HttpOnly,
-				sc:       cs.sc,
-			}
-		}
-
-		return cs
+		csrf := NewCSRF(authKey, opts...)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			csrf.Handle(w, r, h)
+		})
 	}
 }
 
-// Implements http.Handler for the csrf type.
-func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// Handle validates the CSRF token provided in the request, calling the
+// handler `h` on success.
+func (cs *CSRF) Handle(w http.ResponseWriter, r *http.Request, h http.Handler) {
 	// Retrieve the token from the session.
 	// An error represents either a cookie that failed HMAC validation
 	// or that doesn't exist.
@@ -242,7 +254,8 @@ func (cs *csrf) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Cookie")
 
 	// Call the wrapped handler/router on success.
-	cs.h.ServeHTTP(w, r)
+	h.ServeHTTP(w, r)
+
 	// Clear the request context after the handler has completed.
 	context.Clear(r)
 }

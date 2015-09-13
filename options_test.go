@@ -8,8 +8,6 @@ import (
 
 // Tests that options functions are applied to the middleware.
 func TestOptions(t *testing.T) {
-	var h http.Handler
-
 	age := 86400
 	domain := "gorillatoolkit.org"
 	path := "/forms/"
@@ -31,7 +29,7 @@ func TestOptions(t *testing.T) {
 	}
 
 	// Parse our test options and check that they set the related struct fields.
-	cs := parseOptions(h, testOpts...)
+	cs := parseOptions(testOpts...)
 
 	if cs.opts.MaxAge != age {
 		t.Errorf("MaxAge not set correctly: got %v want %v", cs.opts.MaxAge, age)

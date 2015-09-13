@@ -100,11 +100,9 @@ func setStore(s store) func(*csrf) {
 
 // parseOptions parses the supplied options functions and returns a configured
 // csrf handler.
-func parseOptions(h http.Handler, opts ...func(*csrf)) *csrf {
+func parseOptions(opts ...func(*csrf)) *csrf {
 	// Set the handler to call after processing.
-	cs := &csrf{
-		h: h,
-	}
+	cs := &csrf{}
 
 	// Default to true. See Secure & HttpOnly function comments for rationale.
 	// Set here to allow package users to override the default.
